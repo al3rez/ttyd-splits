@@ -1,29 +1,32 @@
 # ttyd-splits
 
-Terminator-style terminal tabs and splits in the browser, running on your own
-machine and reachable **only over your [Tailscale](https://tailscale.com) network**.
-One dependency-free HTML file on top of [ttyd](https://github.com/tsl0922/ttyd).
+Terminator-style terminal tabs and splits in the browser, served from your own
+machine and reachable only inside your [Tailscale](https://tailscale.com)
+network. One HTML file on top of [ttyd](https://github.com/tsl0922/ttyd). No
+build step, no JavaScript dependencies.
+
+![Six terminal panes in a 2x3 grid with a tab bar](screenshot.png)
 
 Open `https://<machine>.<tailnet>.ts.net/splits` from a laptop, tablet, or
-phone anywhere, and you get your dev box's real shells — with tabs, splittable
-panes, and keyboard bindings you know from Terminator. Survives reboots
+phone and you get real shells on your dev box, with the tab and split
+keybindings you know from Terminator. The services come back on reboot
 (launchd on macOS, systemd user units on Linux).
 
 ```
-your browser ──▶ https://<machine>.<tailnet>.ts.net
-                        │  tailscale serve (tailnet-only TLS, WireGuard underneath)
-                        ├── /        ─▶ 127.0.0.1:7681  ttyd (terminal over WebSocket)
-                        └── /splits  ─▶ 127.0.0.1:7690  python http.server (this UI)
+your browser --> https://<machine>.<tailnet>.ts.net
+                    |  tailscale serve (tailnet-only TLS, WireGuard underneath)
+                    |-- /        -> 127.0.0.1:7681  ttyd (terminal over WebSocket)
+                    '-- /splits  -> 127.0.0.1:7690  python http.server (this UI)
 ```
 
-The UI page iframes ttyd once per pane; both live on the same tailnet origin,
-so no CORS, no auth plumbing, no build step, no JavaScript dependencies.
+The page iframes ttyd once per pane. Both routes share one tailnet origin, so
+there is no CORS or auth plumbing to set up.
 
 ## Install
 
-Prereqs: [Tailscale](https://tailscale.com/download) logged in on the machine
-and on whatever device you'll browse from. `ttyd` is installed automatically
-via Homebrew on macOS; on Linux install it first (`sudo apt install ttyd`).
+You need [Tailscale](https://tailscale.com/download) logged in on this machine
+and on whatever device you browse from. On macOS the installer pulls in `ttyd`
+via Homebrew; on Linux install it first (`sudo apt install ttyd`).
 
 ```sh
 git clone https://github.com/al3rez/ttyd-splits
@@ -33,16 +36,15 @@ cd ttyd-splits
 
 The installer:
 
-1. copies `index.html` + `shell.sh` to `~/.ttyd-splits/`
-2. sets up two always-on services bound to **127.0.0.1 only**:
-   - `ttyd` (port `7681`) — the terminal server
-   - `python3 -m http.server` (port `7690`) — serves the UI
-   (launchd agents on macOS, systemd user units on Linux)
-3. runs `tailscale serve` to map `/` → ttyd and `/splits` → the UI over
+1. copies `index.html` and `shell.sh` to `~/.ttyd-splits/`
+2. sets up two always-on services bound to 127.0.0.1 only: `ttyd` on port
+   7681 and `python3 -m http.server` on port 7690 (launchd agents on macOS,
+   systemd user units on Linux)
+3. runs `tailscale serve` to map `/` to ttyd and `/splits` to the UI over
    tailnet-only HTTPS
 
-Then open **`https://<machine>.<tailnet>.ts.net/splits`** — the installer
-prints the exact URL. Ports are configurable: `TTYD_PORT=8681 UI_PORT=8690 ./install.sh`.
+Then open `https://<machine>.<tailnet>.ts.net/splits`. The installer prints
+the exact URL. Ports are configurable: `TTYD_PORT=8681 UI_PORT=8690 ./install.sh`.
 
 On Linux, run `sudo loginctl enable-linger $USER` if you want the services up
 without an active login session.
@@ -59,38 +61,41 @@ without an active login session.
 | `Ctrl+Shift+N` | new browser window |
 | middle-click a tab | close it |
 
-Tabs get random `adjective-animal` names. Click a pane to focus it (orange
-ring); shortcuts work while a terminal has focus.
+Tabs get random adjective-animal names. Click a pane to focus it (orange
+ring). Shortcuts work while a terminal has focus.
 
 ## Customize
 
-Edit `~/.ttyd-splits/index.html` and reload the page (no service restart needed):
+Edit `~/.ttyd-splits/index.html` and reload the page. No service restart
+needed.
 
-- **`DIRS`** (top of the script) — list of starting directories. The first tab
-  opens one pane per entry, in rows of up to 3 — list 6 projects and you get a
-  2×3 grid of shells, one per project. New splits/tabs open in the last entry.
-  Empty list = single pane in `$HOME`.
-- Terminal font/size live in the service definition (`-t fontFamily=...`,
-  `-t fontSize=...` in `~/Library/LaunchAgents/local.ttyd.plist` or the
-  systemd unit) — see `ttyd --help` for all client options.
-- `~/.ttyd-splits/shell.sh` decides what runs in each pane (default: your
-  login shell in the requested directory).
+`DIRS`, at the top of the script, lists the starting directories. The first
+tab opens one pane per entry in rows of up to three, so six projects give you
+the 2x3 grid in the screenshot. New splits and new tabs open in the last
+entry. An empty list starts a single pane in `$HOME`.
 
-Re-running `./install.sh` is idempotent; it backs up a customized `index.html`
-to `index.html.bak` before overwriting.
+Terminal font and size are ttyd client options (`-t fontFamily=...`,
+`-t fontSize=...`) in `~/Library/LaunchAgents/local.ttyd.plist` or the systemd
+unit. See `ttyd --help` for the rest.
+
+`~/.ttyd-splits/shell.sh` decides what runs in each pane. The default is your
+login shell in the requested directory.
+
+Re-running `./install.sh` is safe. It backs up a customized `index.html` to
+`index.html.bak` before overwriting.
 
 ## Security model
 
-This is **an unauthenticated, writable shell as your user**. It is safe only
-because of how it's exposed:
+This is an unauthenticated writable shell running as your user. It is safe
+only because of how it is exposed:
 
-- Both servers bind to `127.0.0.1` — nothing listens on your LAN.
-- The only route in is `tailscale serve`, which is **tailnet-only**: devices
-  must be authenticated to *your* Tailscale network. Anyone on your tailnet
-  gets a shell, so this assumes a personal/trusted tailnet.
-- **Never** expose it with `tailscale funnel` (public internet). Don't.
-- For extra protection, restrict which tailnet devices can reach these ports
-  with [Tailscale ACLs](https://tailscale.com/kb/1018/acls).
+- Both servers bind to 127.0.0.1, so nothing listens on your LAN.
+- The only route in is `tailscale serve`, which is tailnet-only: devices must
+  be authenticated to your own Tailscale network. Anyone on your tailnet gets
+  a shell, so this assumes a personal or otherwise trusted tailnet.
+- Never expose it with `tailscale funnel` (that is the public internet).
+- To restrict which tailnet devices can reach these ports, use
+  [Tailscale ACLs](https://tailscale.com/kb/1018/acls).
 
 ## Uninstall
 
