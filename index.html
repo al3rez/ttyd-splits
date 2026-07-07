@@ -59,15 +59,13 @@ const root = document.getElementById("root");
 const tabbar = document.getElementById("tabbar");
 let focused = null;
 
-// Starting directory for each default pane — edit to taste. The first tab
-// opens one pane per entry (in rows of up to 3). New splits and new tabs
-// open in the last directory listed. Leave empty to start a single pane
-// in $HOME.
-const DIRS = [
-  // "/Users/you/Work/project-a",
-  // "/Users/you/Work/project-b",
-  // "/Users/you/Work",
-];
+// Starting directory for each default pane. Configure by dropping a
+// config.json next to this file (kept out of git, survives updates):
+//   { "dirs": ["/path/project-a", "/path/project-b"],
+//     "tabFont": "Menlo, monospace" }
+// The first tab opens one pane per entry (rows of up to 3). New splits and
+// new tabs open in the last entry. No config.json = one pane in $HOME.
+let DIRS = [];
 let dirIndex = 0;
 const nextDir = () =>
   DIRS.length ? DIRS[Math.min(dirIndex++, DIRS.length - 1)] : "";
@@ -289,8 +287,20 @@ function closePane() {
   }
 }
 
-// First tab: one pane per DIRS entry (or a single pane if DIRS is empty)
-newTab({ grid: true });
+// Load optional config.json (resolved relative to wherever this page is
+// mounted, e.g. /splits/config.json), then open the first tab: one pane per
+// configured dir, or a single pane if none are configured.
+const base = location.pathname.endsWith("/")
+  ? location.pathname
+  : location.pathname + "/";
+fetch(base + "config.json")
+  .then((r) => (r.ok ? r.json() : null))
+  .catch(() => null)
+  .then((cfg) => {
+    if (Array.isArray(cfg?.dirs)) DIRS = cfg.dirs;
+    if (cfg?.tabFont) tabbar.style.font = "14px " + cfg.tabFont;
+    newTab({ grid: true });
+  });
 </script>
 </body>
 </html>

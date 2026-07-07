@@ -66,13 +66,25 @@ ring). Shortcuts work while a terminal has focus.
 
 ## Customize
 
-Edit `~/.ttyd-splits/index.html` and reload the page. No service restart
-needed.
+Create `~/.ttyd-splits/config.json` and reload the page. No service restart
+needed, and updates never touch it:
 
-`DIRS`, at the top of the script, lists the starting directories. The first
-tab opens one pane per entry in rows of up to three, so six projects give you
-the 2x3 grid in the screenshot. New splits and new tabs open in the last
-entry. An empty list starts a single pane in `$HOME`.
+```json
+{
+  "dirs": [
+    "/Users/you/Work/project-a",
+    "/Users/you/Work/project-b",
+    "/Users/you/Work"
+  ],
+  "tabFont": "Menlo, monospace"
+}
+```
+
+`dirs` lists the starting directories. The first tab opens one pane per entry
+in rows of up to three, so six projects give you the 2x3 grid in the
+screenshot. New splits and new tabs open in the last entry. Without a
+config.json you get a single pane in `$HOME`. `tabFont` is optional and only
+styles the tab bar.
 
 Terminal font and size are ttyd client options (`-t fontFamily=...`,
 `-t fontSize=...`) in `~/Library/LaunchAgents/local.ttyd.plist` or the systemd
@@ -81,8 +93,8 @@ unit. See `ttyd --help` for the rest.
 `~/.ttyd-splits/shell.sh` decides what runs in each pane. The default is your
 login shell in the requested directory.
 
-Re-running `./install.sh` is safe. It backs up a customized `index.html` to
-`index.html.bak` before overwriting.
+Re-running `./install.sh` is safe. Your `config.json` is never overwritten,
+and a customized `index.html` is backed up to `index.html.bak` first.
 
 ## Security model
 
