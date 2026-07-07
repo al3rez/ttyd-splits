@@ -1,0 +1,255 @@
+<!doctype html>
+<html>
+<head>
+<meta charset="utf-8">
+<title>Terminals</title>
+<style>
+  /* Single-source separator system: every visible line is one seam.
+     Seams come from flex `gap` (only ever drawn BETWEEN siblings, so
+     nesting can never stack two of them) painted by the container's
+     background. No child ever carries its own border. */
+  :root { --seam: #000; --seam-w: 1px; }
+  html, body { height: 100%; margin: 0; background: #2b2b2b; }
+  body { display: flex; flex-direction: column; }
+  #tabbar {
+    display: flex; align-items: stretch; gap: var(--seam-w);
+    background: var(--seam); user-select: none;
+    font: 14px Menlo, Monaco, "DejaVu Sans Mono", monospace;
+    overflow-x: auto; overflow-y: hidden;
+  }
+  #tabbar .tab, #tabbar .newtab {
+    padding: 6px 20px; background: #2b2b2b; color: #777;
+    cursor: pointer; white-space: nowrap;
+  }
+  #tabbar .tab.active { color: #eee; }
+  #tabbar .tab:not(.active):hover, #tabbar .newtab:hover { color: #ccc; }
+  #tabbar .newtab { flex: 1; padding: 6px 12px; color: #555; }
+  /* The 1px inset gives a uniform outer seam, so the tabbar/pane line is
+     this frame alone (no tabbar border to double it) and the focus ring
+     always has a seam to paint into, even on outermost panes. */
+  #root { flex: 1; position: relative; min-height: 0; background: var(--seam); }
+  .workspace { position: absolute; inset: var(--seam-w); display: flex; }
+  .workspace > * { flex: 1 1 0; min-width: 0; min-height: 0; }
+  .workspace.hidden { visibility: hidden; }
+  .split { display: flex; height: 100%; width: 100%; gap: var(--seam-w); background: var(--seam); }
+  .split.h { flex-direction: row; }
+  .split.v { flex-direction: column; }
+  .split > * { flex: 1 1 0; min-width: 0; min-height: 0; }
+  .pane { position: relative; background: #2b2b2b; }
+  .pane iframe { width: 100%; height: 100%; border: 0; display: block; }
+  /* Focus ring is paint-only (outline takes no layout space) and drawn at
+     offset 0, INTO the surrounding seam — it recolors the existing 1px line
+     instead of adding a second one. z-index keeps it above neighboring
+     iframes. */
+  .pane.focused { outline: var(--seam-w) solid #d97757; outline-offset: 0; z-index: 1; }
+</style>
+</head>
+<body>
+<div id="tabbar"></div>
+<div id="root"></div>
+<script>
+// Terminator-style:
+//   Ctrl+Shift+E      split horizontally (side by side)
+//   Ctrl+Shift+O      split vertically (stacked)
+//   Ctrl+Shift+W      close focused pane (last pane closes the tab)
+//   Ctrl+Shift+T      new tab
+//   Ctrl+Shift+Left/Right  switch tab
+//   Ctrl+Shift+N      new window
+const root = document.getElementById("root");
+const tabbar = document.getElementById("tabbar");
+let focused = null;
+
+// Starting directory for each default pane — edit to taste. The first tab
+// opens one pane per entry (in rows of up to 3). New splits and new tabs
+// open in the last directory listed. Leave empty to start a single pane
+// in $HOME.
+const DIRS = [
+  // "/Users/you/Work/project-a",
+  // "/Users/you/Work/project-b",
+  // "/Users/you/Work",
+];
+let dirIndex = 0;
+const nextDir = () =>
+  DIRS.length ? DIRS[Math.min(dirIndex++, DIRS.length - 1)] : "";
+
+// ---- tabs ----------------------------------------------------------------
+const workspaces = [];
+let activeWs = 0;
+
+// petname-style tab names (adjective-animal, like `petname`)
+const ADJS = ["able","bold","brave","bright","calm","clean","clever","cool",
+  "crisp","daring","deep","eager","fair","fast","fine","fond","free","glad",
+  "grand","happy","keen","kind","light","lucky","merry","neat","noble","prime",
+  "proud","quick","quiet","rapid","rare","sharp","smart","snappy","solid",
+  "sound","swift","tidy","top","warm","wise","witty"];
+const ANIMALS = ["ant","bat","bear","bee","bird","boar","carp","cat","colt",
+  "crab","crane","deer","dove","duck","eel","elk","fawn","finch","fox","frog",
+  "goat","gull","hare","hawk","heron","ibex","koi","lamb","lark","lion","lynx",
+  "mole","moth","mouse","newt","otter","owl","panda","pony","pug","quail",
+  "ram","raven","seal","shrew","skunk","sloth","snail","swan","tiger","toad",
+  "trout","tuna","whale","wolf","wren","yak"];
+const petname = () =>
+  ADJS[Math.floor(Math.random() * ADJS.length)] + "-" +
+  ANIMALS[Math.floor(Math.random() * ANIMALS.length)];
+
+function renderTabs() {
+  tabbar.innerHTML = "";
+  workspaces.forEach((ws, i) => {
+    const t = document.createElement("div");
+    t.className = "tab" + (i === activeWs ? " active" : "");
+    t.textContent = ws.name;
+    t.onclick = () => activateTab(i);
+    t.onauxclick = (e) => { if (e.button === 1) closeTab(i); };
+    tabbar.append(t);
+  });
+  const plus = document.createElement("div");
+  plus.className = "newtab";
+  plus.textContent = "+";
+  plus.onclick = () => newTab();
+  tabbar.append(plus);
+}
+
+function activateTab(i) {
+  activeWs = Math.max(0, Math.min(i, workspaces.length - 1));
+  workspaces.forEach((ws, j) =>
+    ws.el.classList.toggle("hidden", j !== activeWs),
+  );
+  renderTabs();
+  const pane = workspaces[activeWs]?.el.querySelector(".pane");
+  if (pane) {
+    setFocused(pane);
+    pane.querySelector("iframe").contentWindow?.focus();
+  }
+}
+
+function newTab({ grid = false } = {}) {
+  const el = document.createElement("div");
+  el.className = "workspace";
+  if (grid && DIRS.length > 1) {
+    // one pane per DIRS entry, in rows of up to 3
+    const perRow = 3;
+    const rows = document.createElement("div");
+    rows.className = "split v";
+    for (let r = 0; r < Math.ceil(DIRS.length / perRow); r++) {
+      const row = document.createElement("div");
+      row.className = "split h";
+      const cols = Math.min(perRow, DIRS.length - r * perRow);
+      for (let c = 0; c < cols; c++) row.append(makePane());
+      rows.append(row);
+    }
+    el.append(rows);
+  } else {
+    el.append(makePane());
+  }
+  root.append(el);
+  workspaces.push({ el, name: petname() });
+  activateTab(workspaces.length - 1);
+}
+
+function closeTab(i) {
+  if (workspaces.length <= 1) return;
+  workspaces[i].el.remove();
+  workspaces.splice(i, 1);
+  activateTab(Math.min(i, workspaces.length - 1));
+}
+
+// ---- panes ---------------------------------------------------------------
+function setFocused(pane) {
+  if (focused) focused.classList.remove("focused");
+  focused = pane;
+  if (pane) pane.classList.add("focused");
+}
+
+function handleKey(e) {
+  if (!(e.ctrlKey && e.shiftKey)) return;
+  const key = e.code;
+  if (key === "KeyE") split("h");
+  else if (key === "KeyO") split("v");
+  else if (key === "KeyW") closePane();
+  else if (key === "KeyT") newTab();
+  else if (key === "KeyN") window.open(location.href, "_blank");
+  else if (key === "ArrowRight") activateTab((activeWs + 1) % workspaces.length);
+  else if (key === "ArrowLeft")
+    activateTab((activeWs - 1 + workspaces.length) % workspaces.length);
+  else return;
+  e.preventDefault();
+  e.stopImmediatePropagation();
+}
+
+function makePane() {
+  const pane = document.createElement("div");
+  pane.className = "pane";
+  const iframe = document.createElement("iframe");
+  iframe.src = "/?arg=" + encodeURIComponent(nextDir());
+  iframe.addEventListener("load", () => {
+    const win = iframe.contentWindow;
+    win.document.addEventListener("keydown", handleKey, true);
+    win.addEventListener("focus", () => setFocused(pane));
+    win.document.addEventListener("mousedown", () => setFocused(pane), true);
+    // ttyd only refits its terminal on window resize; forward pane size
+    // changes into the iframe so splits/window moves refit the terminal
+    let raf = null;
+    const refit = () => {
+      if (raf) cancelAnimationFrame(raf);
+      raf = requestAnimationFrame(() => {
+        try { win.dispatchEvent(new win.Event("resize")); } catch {}
+      });
+    };
+    new ResizeObserver(refit).observe(pane);
+    refit();
+  });
+  pane.append(iframe);
+  return pane;
+}
+
+function activeEl() {
+  return workspaces[activeWs]?.el ?? root;
+}
+
+function split(dir) {
+  const target =
+    focused && activeEl().contains(focused)
+      ? focused
+      : activeEl().querySelector(".pane");
+  if (!target) return;
+  const parent = target.parentElement;
+  const container = document.createElement("div");
+  container.className = "split " + dir;
+  parent.replaceChild(container, target);
+  const fresh = makePane();
+  container.append(target, fresh);
+  setTimeout(() => fresh.querySelector("iframe").contentWindow?.focus(), 300);
+}
+
+function closePane() {
+  const target = focused && activeEl().contains(focused) ? focused : null;
+  if (!target) return;
+  const container = target.parentElement;
+  target.remove();
+  focused = null;
+  if (
+    container !== activeEl() &&
+    container.classList.contains("split") &&
+    container.childElementCount <= 1
+  ) {
+    // Collapse the split: promote the sole surviving sibling into our slot
+    const sibling = container.firstElementChild;
+    if (sibling) container.parentElement.replaceChild(sibling, container);
+    else container.remove();
+  }
+  const next = activeEl().querySelector(".pane");
+  if (next) {
+    setFocused(next);
+    next.querySelector("iframe").contentWindow?.focus();
+  } else if (workspaces.length > 1) {
+    closeTab(activeWs);
+  } else {
+    activeEl().append(makePane());
+  }
+}
+
+// First tab: one pane per DIRS entry (or a single pane if DIRS is empty)
+newTab({ grid: true });
+</script>
+</body>
+</html>
