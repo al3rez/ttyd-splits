@@ -144,6 +144,7 @@ function newTab({ grid = false } = {}) {
   root.append(el);
   workspaces.push({ el, name: petname() });
   activateTab(workspaces.length - 1);
+  snapLayout();
 }
 
 function closeTab(i) {
@@ -206,6 +207,41 @@ function activeEl() {
   return workspaces[activeWs]?.el ?? root;
 }
 
+// ---- device-pixel snapping ------------------------------------------------
+// At fractional zoom / devicePixelRatio (e.g. Linux HiDPI at 1.25x/1.5x),
+// flexbox lands pane edges on fractional physical pixels, so some 1px seams
+// rasterize 2 physical px wide and others 1 — "overlapping" borders. Snap
+// the seam width and every split boundary to whole device pixels so every
+// line is identical physical thickness at any DPR.
+function snapLayout() {
+  const dpr = window.devicePixelRatio || 1;
+  const snap = (v) => Math.round(v * dpr) / dpr;
+  const seam = Math.max(1, Math.floor(dpr)) / dpr;
+  document.documentElement.style.setProperty("--seam-w", seam + "px");
+  tabbar.style.height = "";
+  tabbar.style.height = snap(tabbar.getBoundingClientRect().height) + "px";
+  // top-down document order: parents get sized before children are measured
+  document.querySelectorAll(".split").forEach((split) => {
+    const horiz = split.classList.contains("h");
+    const rect = split.getBoundingClientRect();
+    const start = horiz ? rect.left : rect.top;
+    const size = horiz ? rect.width : rect.height;
+    if (!size) return;
+    const kids = [...split.children];
+    const n = kids.length;
+    let prev = start;
+    kids.forEach((kid, i) => {
+      const end =
+        i === n - 1
+          ? start + size
+          : snap(start + ((size - seam * (n - 1)) * (i + 1)) / n + seam * i);
+      kid.style.flex = "0 0 " + Math.max(0, end - prev) + "px";
+      prev = end + seam;
+    });
+  });
+}
+addEventListener("resize", () => requestAnimationFrame(snapLayout));
+
 function split(dir) {
   const target =
     focused && activeEl().contains(focused)
@@ -217,7 +253,9 @@ function split(dir) {
   container.className = "split " + dir;
   parent.replaceChild(container, target);
   const fresh = makePane();
+  target.style.flex = "";
   container.append(target, fresh);
+  snapLayout();
   setTimeout(() => fresh.querySelector("iframe").contentWindow?.focus(), 300);
 }
 
@@ -234,9 +272,12 @@ function closePane() {
   ) {
     // Collapse the split: promote the sole surviving sibling into our slot
     const sibling = container.firstElementChild;
-    if (sibling) container.parentElement.replaceChild(sibling, container);
-    else container.remove();
+    if (sibling) {
+      sibling.style.flex = "";
+      container.parentElement.replaceChild(sibling, container);
+    } else container.remove();
   }
+  snapLayout();
   const next = activeEl().querySelector(".pane");
   if (next) {
     setFocused(next);
